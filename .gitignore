@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+backups/
+local_firestore_fallback.json
+products.json
+.eslintcache
+.cache/
+.vite/

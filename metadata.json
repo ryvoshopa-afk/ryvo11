@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Ryvo Store",
+  "description": "A highly-polished, multi-lingual, responsive e-commerce application equipped with a complete shopping cart, checkout system, real-time-simulated admin panel, and robust local state persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

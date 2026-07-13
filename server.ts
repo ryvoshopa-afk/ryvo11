@@ -625,11 +625,16 @@ let firebaseConfig: any = null;
 const configPath = path.join(process.cwd(), "firebase-applet-config.json");
 if (fs.existsSync(configPath)) {
   try {
-    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const fileContent = fs.readFileSync(configPath, "utf8").trim();
+    if (fileContent) {
+      firebaseConfig = JSON.parse(fileContent);
+    }
   } catch (err) {
     console.error("⚠️ Failed to parse firebase-applet-config.json:", err);
   }
-} else {
+}
+
+if (!firebaseConfig) {
   // Try loading from environment variables (e.g. for Netlify deployment)
   const apiKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
   if (apiKey) {

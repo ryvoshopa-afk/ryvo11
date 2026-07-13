@@ -4089,7 +4089,7 @@ export default function AdminPanel({
                           {additionalImages.length > 0 && (
                             <div className="flex flex-wrap gap-2 pt-2 bg-slate-100 dark:bg-slate-900/60 p-2 rounded-xl">
                               {additionalImages.map((img, idx) => (
-                                <div key={idx} className="relative w-12 h-12 rounded-lg border border-slate-200 bg-white dark:bg-black p-0.5 group">
+                                <div key={`${img}-${idx}`} className="relative w-12 h-12 rounded-lg border border-slate-200 bg-white dark:bg-black p-0.5 group">
                                   <img src={img} alt="" className="object-cover w-full h-full rounded" referrerPolicy="no-referrer" />
                                   <button
                                     type="button"
@@ -5120,7 +5120,7 @@ export default function AdminPanel({
                     {/* Deliverable Items listed */}
                     <div className="space-y-2 text-xs font-semibold">
                       {ord.items.map((it, i) => (
-                        <div key={i} className="flex justify-between text-slate-600 dark:text-slate-850 bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-200/60">
+                        <div key={`ord-item-${ord.id}-${it.product_id || it.name}-${i}`} className="flex justify-between text-slate-600 dark:text-slate-850 bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-200/60">
                           <span>{it.name} <strong className="text-slate-400">x{it.quantity}</strong></span>
                           <span className="font-bold text-slate-800 dark:text-white">{it.price * it.quantity} {isRtl ? 'ر.س' : 'SAR'}</span>
                         </div>
@@ -5237,8 +5237,8 @@ export default function AdminPanel({
                   { day: 'Thu', sales: 14500, height: '100%', highlight: true },
                   { day: 'Fri', sales: 9000, height: '70%' },
                   { day: 'Sat', sales: 5200, height: '45%' },
-                ].map((col, idx) => (
-                  <div key={idx} className="flex flex-col items-center gap-3 z-10 flex-1 group">
+                ].map((col) => (
+                  <div key={col.day} className="flex flex-col items-center gap-3 z-10 flex-1 group">
                     <span className="opacity-0 group-hover:opacity-100 text-[9px] text-[#1e293b] dark:text-amber-400 bg-[#e2e8f0] dark:bg-slate-800 px-1.5 py-0.5 rounded transition-all duration-300 font-bold">
                       {col.sales} SAR
                     </span>
@@ -12406,7 +12406,7 @@ export default function AdminPanel({
                     </thead>
                     <tbody className="divide-y divide-slate-100 bg-white font-semibold text-slate-700">
                       {printingOrder.items.map((it, idx) => (
-                        <tr key={idx}>
+                        <tr key={`print-item-${idx}-${it.product_id || it.name}`}>
                           <td className="p-3">
                             <span className="font-bold text-slate-900 block">{it.name}</span>
                             <span className="text-[10px] text-slate-400 font-bold block">{isRtl ? 'اللون المحدد:' : 'Color:'} {it.color || 'أسود'}</span>

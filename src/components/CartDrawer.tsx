@@ -103,7 +103,7 @@ export default function CartDrawer({
                 const name = currentLanguage === 'ar' ? item.product.name_ar : currentLanguage === 'fr' ? item.product.name_fr : item.product.name_en;
                 return (
                   <div
-                    key={item.product.id}
+                    key={`${item.product.id}-${item.color || 'default'}`}
                     id={`cart-item-${item.product.id}`}
                     className="flex items-center gap-4 bg-slate-50 dark:bg-[#0A0C10] rounded-2xl p-4 border border-slate-150 dark:border-[#1E293B] transition-all"
                   >
@@ -202,7 +202,7 @@ export default function CartDrawer({
                           {items.map(it => {
                             const name = isRtl ? it.product.name_ar : it.product.name_en;
                             return (
-                              <li key={it.product.id} className="truncate">
+                              <li key={`${it.product.id}-${it.color || 'default'}`} className="truncate">
                                 <span className="font-bold text-slate-700 dark:text-slate-300">({it.quantity}x)</span> {name}
                               </li>
                             );

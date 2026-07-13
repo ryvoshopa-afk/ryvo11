@@ -147,7 +147,7 @@ export default function Hero({ currentLanguage, onShopClick, shopLogo, heroSlide
           <div className={`flex items-center gap-2 pt-6 ${isRtl ? 'justify-start' : 'justify-start'}`}>
             {slides.map((_, idx) => (
               <button
-                key={idx}
+                key={`hero-slide-${idx}`}
                 id={`btn-hero-slide-${idx}`}
                 onClick={() => setActiveSlide(idx)}
                 className={`h-2 rounded-full transition-all duration-300 ${

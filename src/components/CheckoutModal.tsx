@@ -509,7 +509,7 @@ export default function CheckoutModal({
                   {cart.map(item => {
                     const name = currentLanguage === 'ar' ? item.product.name_ar : currentLanguage === 'fr' ? item.product.name_fr : item.product.name_en;
                     return (
-                      <div key={item.product.id} className="flex items-center gap-3 bg-white dark:bg-[#11141D] p-2.5 rounded-xl border border-slate-100 dark:border-[#1E293B]">
+                      <div key={`${item.product.id}-${item.color || 'default'}`} className="flex items-center gap-3 bg-white dark:bg-[#11141D] p-2.5 rounded-xl border border-slate-100 dark:border-[#1E293B]">
                         <img src={item.product.image} className="w-10 h-10 object-cover rounded-lg" referrerPolicy="no-referrer" />
                         <div className={`flex-1 min-w-0 ${isRtl ? 'text-right' : 'text-left'}`}>
                           <h4 className="text-xs font-bold truncate text-slate-800 dark:text-gray-200">{name}</h4>
@@ -580,7 +580,7 @@ export default function CheckoutModal({
                           </div>
                           <ul className={`space-y-0.5 ${isRtl ? 'text-right' : 'text-left'} text-slate-500 dark:text-slate-400 font-medium list-disc list-inside`}>
                             {items.map(it => (
-                              <li key={it.product.id} className="truncate">
+                              <li key={`${it.product.id}-${it.color || 'default'}`} className="truncate">
                                 <span className="font-bold text-slate-700 dark:text-slate-300">({it.quantity}x)</span> {isRtl ? it.product.name_ar : it.product.name_en}
                               </li>
                             ))}

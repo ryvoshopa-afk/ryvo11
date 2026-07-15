@@ -1,0 +1,100 @@
+{
+  "entities": {
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Supplier entity",
+      "type": "object",
+      "properties": {}
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Product entity",
+      "type": "object",
+      "properties": {}
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Order entity",
+      "type": "object",
+      "properties": {}
+    },
+    "User": {
+      "title": "User",
+      "description": "User entity",
+      "type": "object",
+      "properties": {}
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Settings entity",
+      "type": "object",
+      "properties": {}
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Review entity",
+      "type": "object",
+      "properties": {}
+    },
+    "Blog": {
+      "title": "Blog",
+      "description": "Blog entity",
+      "type": "object",
+      "properties": {}
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Active user login session tracking entity",
+      "type": "object",
+      "properties": {}
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Administrative and user activity audit trail log entity",
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "firestore": {
+    "suppliers": {
+      "schema": "Supplier",
+      "description": "Suppliers collection"
+    },
+    "products": {
+      "schema": "Product",
+      "description": "Products collection"
+    },
+    "orders": {
+      "schema": "Order",
+      "description": "Orders collection"
+    },
+    "users": {
+      "schema": "User",
+      "description": "Users collection"
+    },
+    "settings": {
+      "schema": "Settings",
+      "description": "Settings collection"
+    },
+    "reviews": {
+      "schema": "Review",
+      "description": "Reviews collection"
+    },
+    "blog": {
+      "schema": "Blog",
+      "description": "Blog collection"
+    },
+    "sessions": {
+      "schema": "Session",
+      "description": "Active user and admin login sessions"
+    },
+    "support_conversations": {
+      "schema": "SupportConversation",
+      "description": "Real-time support conversations and metadata tracking"
+    },
+    "audit_logs": {
+      "schema": "AuditLog",
+      "description": "System-wide administrative audit activity trail logs"
+    }
+  }
+}

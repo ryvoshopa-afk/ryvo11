@@ -391,7 +391,7 @@ export default function App() {
       smsaEnabled: false,
       smsaApiKey: '',
       codEnabled: true,
-      cjApiKey: 'CJ5551826@api@efe3f2ffeb094044a49af1e8e766c8e7',
+      cjApiKey: '',
     };
   });
 
@@ -1809,10 +1809,10 @@ export default function App() {
             {/* Column 1: Store Intro (Col span 4) */}
             <div className={`md:col-span-4 space-y-4 ${isRtl ? 'text-right' : 'text-left'}`}>
               <div className="flex items-center gap-2">
-                {shopLogo ? (
+                {shopLogo && (shopLogo.startsWith('data:image') || shopLogo.includes('http') || shopLogo.includes('/')) ? (
                   <img src={shopLogo} alt="RYVO" className="h-8 object-contain" referrerPolicy="no-referrer" />
                 ) : (
-                  <span className="text-xl font-black uppercase text-slate-850 dark:text-white tracking-wider">RYVO</span>
+                  <span className="text-xl font-black uppercase text-slate-850 dark:text-white tracking-wider">{shopLogo || 'RYVO'}</span>
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">

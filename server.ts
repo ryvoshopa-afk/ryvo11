@@ -776,7 +776,7 @@ const defaultSettings: GlobalSettings = {
     smsaEnabled: false,
     smsaApiKey: "",
     codEnabled: true,
-    cjApiKey: "CJ5551826@api@efe3f2ffeb094044a49af1e8e766c8e7",
+    cjApiKey: process.env.CJ_API_KEY || "",
   },
 };
 
@@ -903,8 +903,8 @@ async function seedDatabaseIfNeeded() {
       if (!currentSettings.integrations) {
         currentSettings.integrations = {};
       }
-      if (!currentSettings.integrations.cjApiKey || currentSettings.integrations.cjApiKey === "YOUR_CJ_API_KEY") {
-        currentSettings.integrations.cjApiKey = "CJ5551826@api@efe3f2ffeb094044a49af1e8e766c8e7";
+      if (!currentSettings.integrations.cjApiKey && process.env.CJ_API_KEY) {
+        currentSettings.integrations.cjApiKey = process.env.CJ_API_KEY;
         await setDoc(settingsDocRef, currentSettings);
       }
       saveSettings(currentSettings);

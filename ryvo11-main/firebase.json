@@ -1,7 +1,0 @@
-{
-  "firestore": {
-    "database": "ai-studio-ryvostore-a91ee0f1-b50d-403c-821a-a6ff4d7d32a6",
-    "databaseId": "ai-studio-ryvostore-a91ee0f1-b50d-403c-821a-a6ff4d7d32a6",
-    "rules": "firestore.rules"
-  }
-}

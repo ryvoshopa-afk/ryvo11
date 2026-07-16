@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://ryvo-shop-v3.web.app/api/:path*"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 [[redirects]]
   from = "/api/*"
-  to = "/api/:splat"
+  to = "https://ryvo-shop-v3.web.app/api/:splat"
   status = 200
   force = true
 

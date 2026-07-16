@@ -1,20 +1,8 @@
-[build]
-  command = "npm run build"
-  publish = "dist"
-
-[build.environment]
-  NODE_VERSION = "20"
-
 [[redirects]]
   from = "/api/*"
-  to = "https://ryvo-store-612389179129.europe-west1.run.app/api/:splat"
+  to = "/api/:splat"
   status = 200
   force = true
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
 
 [[headers]]
   for = "/*"

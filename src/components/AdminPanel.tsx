@@ -6367,8 +6367,10 @@ export default function AdminPanel({
             </div>
 
             {(() => {
-              // Extract unique customer sessions based on live Firestore dbConversations
-              const list = dbConversations.map(c => {
+              // ── AI-First: only show conversations that require HUMAN intervention ──
+              // Filter to only QUEUED_FOR_HUMAN and HUMAN_HANDLING - hide AI_HANDLING entirely
+              const humanStatuses = new Set(['QUEUED_FOR_HUMAN', 'HUMAN_HANDLING', 'waiting']);
+              const allConversations = dbConversations.map(c => {
                 const lastMsg = c.messages && c.messages.length > 0 ? c.messages[c.messages.length - 1] : null;
                 return {
                   email: c.id,
@@ -6376,6 +6378,7 @@ export default function AdminPanel({
                   lastText: lastMsg ? lastMsg.text : '',
                   time: lastMsg ? lastMsg.time : '',
                   status: c.status || 'active',
+                  ai_summary: c.ai_summary || '',
                   rating: c.rating,
                   ratingComment: c.ratingComment,
                   device: c.device,
@@ -6388,14 +6391,18 @@ export default function AdminPanel({
                 };
               });
 
-              // Ensure the selected email exists in our active directory, if empty add default
+              // Only show sessions that need human agents (AI_HANDLING is hidden)
+              const list = allConversations.filter(s => humanStatuses.has(s.status));
+
+              // Placeholder if no human-handled sessions exist
               if (list.length === 0) {
                 list.push({
-                  email: 'guest@ryvo.co',
-                  name: isRtl ? 'عميل زائر' : 'Guest Customer',
-                  lastText: '',
+                  email: 'no-sessions@ryvo.co',
+                  name: isRtl ? '✅ لا توجد جلسات تحتاج تدخلاً بشرياً' : '✅ No sessions need human support',
+                  lastText: isRtl ? 'الذكاء الاصطناعي يتعامل مع جميع الجلسات حالياً' : 'AI is handling all sessions',
                   time: '',
-                  status: 'active',
+                  status: 'AI_HANDLING',
+                  ai_summary: '',
                   rating: undefined,
                   ratingComment: undefined,
                   device: undefined, os: undefined, browser: undefined, ip: undefined, createdAt: undefined, ordersCount: 0, lastOrderDetails: undefined
@@ -6403,10 +6410,13 @@ export default function AdminPanel({
               }
 
               const selectedConv = dbConversations.find(c => c.id.toLowerCase() === selectedSessionEmail.toLowerCase());
-              const currentChatSessionMessages = selectedConv ? (selectedConv.messages || []) : [];
+              const currentChatSessionMessages = (selectedConv?.messages || []).filter((m: any) => !m.isInternal);
+              const internalNotes = (selectedConv?.messages || []).filter((m: any) => m.isInternal);
+              const selectedConvStatus = selectedConv?.status || 'AI_HANDLING';
+              const selectedAiSummary = selectedConv?.ai_summary || '';
 
               // Find all users waiting for human support
-              const contactRequests = list.filter(session => session.status === 'waiting');
+              const contactRequests = list.filter(session => session.status === 'QUEUED_FOR_HUMAN' || session.status === 'waiting');
 
               if (supportSubTab === 'settings') {
                 return (
@@ -7002,7 +7012,15 @@ export default function AdminPanel({
                         </div>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto pt-3 space-y-2 pr-1 select-none">
+                      {/* Live count badge */}
+                      <div className="flex items-center justify-between text-[9px] font-bold text-slate-400 px-1 py-1">
+                        <span className="text-amber-400 font-black">{list.filter(s => s.status !== 'AI_HANDLING').length} {isRtl ? 'تحتاج تدخلاً' : 'need attention'}</span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          {isRtl ? 'مُصفّاة (بشري فقط)' : 'Filtered (human only)'}
+                        </span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto pt-1 space-y-2 pr-1 select-none">
                         {list.filter(session => {
                           const term = supportSearchTerm.toLowerCase();
                           return (
@@ -7066,13 +7084,21 @@ export default function AdminPanel({
                                     </p>
                                   )}
 
-                                  {isSessionWantsContact && (
-                                    <span className={`inline-block text-[8px] uppercase font-black px-1.5 py-0.5 rounded mt-1.5 ${
-                                      isSelected ? 'bg-white/25 text-white' : 'bg-rose-500/10 text-rose-500'
-                                    }`}>
-                                      {isRtl ? 'طلب تواصل 🔴' : 'Contact Admin 🔴'}
-                                    </span>
-                                  )}
+                                  {/* Status badge */}
+                                  {(() => {
+                                    const st = session.status;
+                                    const label = st === 'QUEUED_FOR_HUMAN'
+                                      ? (isRtl ? '⏳ في الانتظار' : '⏳ Queued')
+                                      : st === 'HUMAN_HANDLING'
+                                        ? (isRtl ? '👨‍💼 مع موظف' : '👨‍💼 With Agent')
+                                        : (isRtl ? '⚠️ انتظار' : '⚠️ Waiting');
+                                    const color = st === 'HUMAN_HANDLING' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400';
+                                    return (
+                                      <span className={`inline-block text-[7.5px] uppercase font-black px-1.5 py-0.5 rounded mt-1 ${isSelected ? 'bg-white/20 text-white' : color}`}>
+                                        {label}
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
                               </button>
 
@@ -7098,13 +7124,25 @@ export default function AdminPanel({
                     </div>
 
                     {/* Columns 2 & 3: Chat log visualization */}
-                    <div className="lg:col-span-2 border border-slate-150 dark:border-slate-200 rounded-2xl p-4 bg-slate-50 dark:bg-[#0A0C10] flex flex-col h-[500px]">
-                    <div id="admin-chat-header" className="pb-2 border-b border-slate-200 dark:border-slate-200 flex justify-between items-center text-[10px] font-black uppercase text-slate-400">
+                    <div className="lg:col-span-2 border border-slate-150 dark:border-slate-200 rounded-2xl bg-slate-50 dark:bg-[#0A0C10] flex flex-col h-[500px]">
+                    {/* AI Summary Banner - shown when available */}
+                    {selectedAiSummary && (
+                      <div className="flex-shrink-0 bg-gradient-to-r from-sky-500/10 via-violet-500/5 to-sky-500/10 border-b border-sky-500/20 px-4 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <span className="text-sky-400 flex-shrink-0 mt-0.5">🤖</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[9px] font-black text-sky-400 uppercase tracking-wider mb-0.5">{isRtl ? 'ملخص الذكاء الاصطناعي للمحادثة:' : 'AI Conversation Summary:'}</p>
+                            <p className="text-[10px] text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-2 font-medium">{selectedAiSummary}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div id="admin-chat-header" className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center text-[10px] font-black uppercase text-slate-400 flex-shrink-0">
                       <span className="flex items-center gap-1.5 truncate">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                        <span className="truncate">{isRtl ? `محادثة الجلسة: ${selectedSessionEmail}` : `Session Log: ${selectedSessionEmail}`}</span>
+                        <span className="truncate">{isRtl ? `محادثة: ${selectedSessionEmail}` : `Chat: ${selectedSessionEmail}`}</span>
                       </span>
-                      <span className="text-emerald-505 shrink-0">{currentChatSessionMessages.length} {isRtl ? 'رسالة' : 'messages'}</span>
+                      <span className="text-emerald-505 shrink-0">{currentChatSessionMessages.length} {isRtl ? 'رسالة' : 'msgs'}</span>
                     </div>
 
                     <div className="flex-1 overflow-y-auto py-4 space-y-3 pr-1">
@@ -7116,14 +7154,23 @@ export default function AdminPanel({
                         currentChatSessionMessages.map((msg: any) => (
                           <div key={msg.id} className={`flex flex-col max-w-[85%] ${msg.sender === 'support' ? 'ms-auto items-end' : 'me-auto items-start'}`}>
                             <div className={`p-3 rounded-2xl text-[11px] font-medium leading-relaxed ${
-                              msg.sender === 'support' 
-                                ? 'bg-slate-900 border border-slate-200 text-white' 
-                                : 'bg-[var(--primary-color, #38bdf8)]/10 text-slate-850 dark:text-gray-100 border border-[var(--primary-color, #38bdf8)]/20'
+                              msg.isInternal
+                                ? 'bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200'
+                                : msg.sender === 'support'
+                                  ? msg.sender_type === 'ai'
+                                    ? 'bg-sky-500/10 border border-sky-500/25 text-slate-800 dark:text-sky-100'
+                                    : 'bg-slate-900 border border-slate-700 text-white'
+                                  : 'bg-[var(--primary-color,#38bdf8)]/10 text-slate-850 dark:text-gray-100 border border-[var(--primary-color,#38bdf8)]/20'
                             }`}>
+                              {msg.isInternal && (
+                                <p className="text-[9px] font-black text-amber-600 dark:text-amber-400 mb-1 flex items-center gap-1">🔒 {isRtl ? 'ملاحظة داخلية (مخفية عن العميل)' : 'Internal note (hidden from customer)'}</p>
+                              )}
                               {msg.attachment && (
                                 <div className="mb-2 max-w-xs rounded overflow-hidden border border-black/15 bg-black/10 p-1">
                                   {msg.attachment.type === 'image' ? (
                                     <img src={msg.attachment.url} alt="Attachment" className="max-h-32 object-cover" />
+                                  ) : msg.attachment.type === 'audio' ? (
+                                    <audio controls src={msg.attachment.url} className="w-full" />
                                   ) : (
                                     <a href={msg.attachment.url} download={msg.attachment.name} className="underline text-[10px] block truncate text-blue-500">
                                       📎 {msg.attachment.name}
@@ -7138,11 +7185,15 @@ export default function AdminPanel({
                               </p>
                             </div>
                             <span className="text-[9px] text-slate-400 font-bold mt-1 px-1">
-                              {msg.sender === 'support' 
-                                ? (isRtl ? 'أنت (الدعم الفني)' : 'You (Support)') 
-                                : msg.clientName 
-                                  ? `${msg.clientName} (${msg.clientEmail || (isRtl ? 'عميل' : 'Customer')})` 
-                                  : (isRtl ? 'العميل' : 'Customer')
+                              {msg.isInternal
+                                ? (isRtl ? '🔒 ملاحظة داخلية' : '🔒 Internal note')
+                                : msg.sender === 'support'
+                                  ? msg.sender_type === 'ai'
+                                    ? (isRtl ? '🤖 الذكاء الاصطناعي' : '🤖 AI')
+                                    : (isRtl ? '👨‍💼 أنت (الدعم)' : '👨‍💼 You (Support)')
+                                  : msg.clientName
+                                    ? `${msg.clientName} (${msg.clientEmail || (isRtl ? 'عميل' : 'Customer')})`
+                                    : (isRtl ? 'العميل' : 'Customer')
                               } • {msg.time}
                             </span>
                           </div>
@@ -7346,15 +7397,15 @@ export default function AdminPanel({
                           <div className="text-right">
                             <h4 className="text-xs font-black text-slate-900 dark:text-white">{isRtl ? 'صندوق الرد السريع 📨' : 'Quick Response Console 📨'}</h4>
                             <p className="text-[10px] text-slate-400 font-bold leading-relaxed">
-                              {isRtl ? 'الرد الفوري على البريد المحدد فوق: ' : 'Quickly replying to chosen session: '}
+                              {isRtl ? 'الرد على: ' : 'Replying to: '}
                               <strong className="text-emerald-500 block font-mono bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/10 mt-1 truncate">{selectedSessionEmail}</strong>
                             </p>
                             
                             <textarea
                               value={supportReply}
                               onChange={(e) => setSupportReply(e.target.value)}
-                              placeholder={isRtl ? 'اكتب إجابتك هنا...' : 'Type your answer...'}
-                              rows={4}
+                              placeholder={isRtl ? 'اكتب ردك هنا...' : 'Type your reply...'}
+                              rows={3}
                               className="w-full mt-2 text-xs p-3 rounded-xl border bg-slate-50 dark:bg-[#0A0C10] border-slate-205 dark:border-slate-805 focus:border-emerald-500 text-slate-850 dark:text-white outline-none font-sans text-right"
                             />
                           </div>
@@ -7363,14 +7414,95 @@ export default function AdminPanel({
                     </div>
 
                     {supportCol4Tab !== 'profile' && (
-                      <button
-                        type="button"
-                        onClick={sendSupportReply}
-                        disabled={!supportReply.trim()}
-                        className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed uppercase mt-4"
-                      >
-                        {isRtl ? 'إرسال الإجابة كدعم فني 🚀' : 'Submit Support Reply 🚀'}
-                      </button>
+                      <div className="space-y-2 mt-3">
+                        {/* Main send reply */}
+                        <button
+                          type="button"
+                          onClick={sendSupportReply}
+                          disabled={!supportReply.trim()}
+                          className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                        >
+                          <span>{isRtl ? '📤 إرسال رد الموظف' : '📤 Send Agent Reply'}</span>
+                        </button>
+
+                        {/* Internal note button */}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const noteText = supportReply.trim();
+                            if (!noteText) return;
+                            try {
+                              await fetch(`/api/support/conversations/${encodeURIComponent(selectedSessionEmail)}/internal-note`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ note: noteText, sender: 'support' })
+                              });
+                              setSupportReply('');
+                              triggerToast(isRtl ? '🔒 تم حفظ الملاحظة الداخلية بنجاح!' : '🔒 Internal note saved!');
+                            } catch { triggerToast(isRtl ? 'فشل في حفظ الملاحظة!' : 'Failed to save note!'); }
+                          }}
+                          disabled={!supportReply.trim()}
+                          className="w-full py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-600 dark:text-amber-400 font-black text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+                        >
+                          🔒 {isRtl ? 'حفظ كملاحظة داخلية (مخفية)' : 'Save as Internal Note (hidden)'}
+                        </button>
+
+                        {/* Divider */}
+                        <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
+
+                        {/* Action controls row */}
+                        <div className="grid grid-cols-2 gap-2">
+                          {/* Reset to AI */}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await fetch(`/api/support/conversations/${encodeURIComponent(selectedSessionEmail)}/status`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'AI_HANDLING' })
+                                });
+                                triggerToast(isRtl ? '🤖 تم تحويل المحادثة للذكاء الاصطناعي!' : '🤖 Transferred back to AI!');
+                              } catch { triggerToast(isRtl ? 'فشلت العملية!' : 'Operation failed!'); }
+                            }}
+                            className="py-2 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/25 text-sky-500 font-black text-[10px] rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            🤖 {isRtl ? 'إعادة للذكاء' : 'Reset to AI'}
+                          </button>
+
+                          {/* Close Ticket */}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await fetch(`/api/support/conversations/${encodeURIComponent(selectedSessionEmail)}/status`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'CLOSED' })
+                                });
+                                triggerToast(isRtl ? '✅ تم إغلاق التذكرة بنجاح!' : '✅ Ticket closed successfully!');
+                              } catch { triggerToast(isRtl ? 'فشل الإغلاق!' : 'Close failed!'); }
+                            }}
+                            className="py-2 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-500 font-black text-[10px] rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            ✅ {isRtl ? 'إغلاق التذكرة' : 'Close Ticket'}
+                          </button>
+                        </div>
+
+                        {/* Status badge for selected conversation */}
+                        {selectedConvStatus && selectedConvStatus !== 'AI_HANDLING' && (
+                          <div className="text-center pt-1">
+                            <span className={`inline-flex items-center gap-1 text-[9px] font-black px-2 py-1 rounded-lg ${
+                              selectedConvStatus === 'HUMAN_HANDLING' ? 'bg-emerald-500/10 text-emerald-400' :
+                              selectedConvStatus === 'QUEUED_FOR_HUMAN' ? 'bg-amber-500/10 text-amber-400' :
+                              selectedConvStatus === 'CLOSED' ? 'bg-slate-500/10 text-slate-400' : 'bg-sky-500/10 text-sky-400'
+                            }`}>
+                              {selectedConvStatus === 'HUMAN_HANDLING' ? '👨‍💼' : selectedConvStatus === 'QUEUED_FOR_HUMAN' ? '⏳' : selectedConvStatus === 'CLOSED' ? '✅' : '🤖'}
+                              {selectedConvStatus}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 

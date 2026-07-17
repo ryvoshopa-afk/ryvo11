@@ -3,6 +3,13 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
+import { createServer as createHttpServer } from "http";
+import { Server as SocketIOServer } from "socket.io";
+import { initDb } from "./server/db";
+import { initSockets } from "./server/sockets";
+import * as dbSupportService from "./server/services/dbSupportService";
+import { getDbStatus, query } from "./server/db";
+import { generateAIResponse, generateSmartSummary } from "./server/services/aiSupportService";
 import { INITIAL_PRODUCTS } from "./src/constants/initialProducts";
 import { initializeApp as initializeClientApp, getApps as getClientApps } from "firebase/app";
 import { 
@@ -619,7 +626,8 @@ setTimeout(() => {
 setInterval(runFirestoreBackup, 24 * 60 * 60 * 1000);
 
 // Initialize Firebase Client SDK safely for Server-Side Use
-let db: any = null;
+export let db: any = null;
+export let io: SocketIOServer | null = null;
 let firebaseConfig: any = null;
 
 const configPath = path.join(process.cwd(), "firebase-applet-config.json");
@@ -3194,318 +3202,125 @@ app.post("/api/support/settings", async (req, res) => {
   res.json({ success: true, settings });
 });
 
-// 3. Get All Support Conversations
+// 3. Get All Support Conversations (strictly filtered for agents)
 app.get("/api/support/conversations", async (req, res) => {
-  let list: any[] = [];
-  if (db) {
-    try {
-      const snap = await db.collection("support_conversations").get();
-      list = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-    } catch (e: any) {
-      console.error("Error getting support conversations from Firestore:", e);
-    }
+  try {
+    const list = await dbSupportService.getConversationsForAgent();
+    res.json(list);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (list.length === 0) {
-    const localData = loadLocalSupportConversations();
-    list = Object.values(localData);
-  }
-
-  list.sort((a: any, b: any) => (b.lastActive || 0) - (a.lastActive || 0));
-  res.json(list);
 });
 
 // 4. Get or Create a Support Conversation by Session ID
 app.get("/api/support/conversations/:id", async (req, res) => {
   const { id } = req.params;
   const decodedId = decodeURIComponent(id).toLowerCase().trim();
-
-  let conversation: any = null;
-  if (db) {
-    try {
-      const docRef = db.collection("support_conversations").doc(decodedId);
-      const snap = await docRef.get();
-      if (snap.exists() && snap.data()) {
-        conversation = { id: snap.id, ...snap.data() };
-      }
-    } catch (e) {
-      console.error("Error fetching support conversation:", e);
+  try {
+    const conversation = await dbSupportService.getConversationById(decodedId);
+    if (!conversation) {
+      const newConv = await dbSupportService.getOrCreateConversation(decodedId);
+      return res.json(newConv);
     }
+    res.json(conversation);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  // Fallback to local storage if not found in Firestore or db is null
-  if (!conversation) {
-    const localData = loadLocalSupportConversations();
-    if (localData[decodedId]) {
-      conversation = localData[decodedId];
-    }
-  }
-
-  if (!conversation) {
-    const settings = await getSupportSettings();
-    conversation = {
-      id: decodedId,
-      clientEmail: decodedId.includes("@") ? decodedId : "guest@ryvo.co",
-      clientName: decodedId.includes("@") ? decodedId.split("@")[0] : "زائر",
-      clientPhone: "",
-      country: "SA",
-      language: "ar",
-      device: "Desktop",
-      os: "Windows",
-      browser: "Chrome",
-      ip: "127.0.0.1",
-      createdAt: new Date().toISOString(),
-      lastActive: Date.now(),
-      status: "active",
-      messages: [
-        {
-          id: "welcome",
-          sender: "support",
-          text: settings.welcomeMessage,
-          time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          timestamp: Date.now()
-        }
-      ]
-    };
-    if (db) {
-      try {
-        await db.collection("support_conversations").doc(decodedId).set(conversation);
-      } catch (e) {}
-    }
-    // Also save locally
-    saveLocalSupportConversation(decodedId, conversation);
-  }
-
-  res.json(conversation);
 });
 
 // 5. Append message to conversation, with auto AI fallback response if agent is offline
 app.post("/api/support/conversations/:id/message", async (req, res) => {
   const { id } = req.params;
   const decodedId = decodeURIComponent(id).toLowerCase().trim();
-  const { message, sender, clientName, clientEmail, clientPhone, country, language, device, os, browser, ip, attachment } = req.body;
+  const { message, sender, attachment, isInternal } = req.body;
 
-  if (!message && !attachment) {
-    return res.status(400).json({ error: "Message or attachment is required" });
-  }
+  try {
+    let conversation = await dbSupportService.getOrCreateConversation(decodedId);
+    const msgType = attachment?.type?.startsWith('image/') ? 'image' : 
+                    attachment?.type?.startsWith('audio/') ? 'audio' : 
+                    attachment ? 'file' : 'text';
+    const content = attachment ? attachment.url : message;
 
-  const settings = await getSupportSettings();
-  let conversation: any = null;
-  const docRef = db ? db.collection("support_conversations").doc(decodedId) : null;
-  
-  if (docRef) {
-    try {
-      const snap = await docRef.get();
-      if (snap.exists()) {
-        conversation = snap.data();
-      }
-    } catch (e) {}
-  }
-
-  // Fallback to local storage if not found in Firestore or db is null
-  if (!conversation) {
-    const localData = loadLocalSupportConversations();
-    if (localData[decodedId]) {
-      conversation = localData[decodedId];
-    }
-  }
-
-  // Resolve actual public IP address or fall back to a professional Riyadh IP instead of loopback
-  const clientRealIp = (req.headers['x-forwarded-for'] as string || '').split(',')[0].trim() || req.socket.remoteAddress || "127.0.0.1";
-  const resolvedIp = (clientRealIp === "::1" || clientRealIp === "127.0.0.1" || clientRealIp === "::ffff:127.0.0.1") ? "95.140.23.11" : clientRealIp;
-
-  if (!conversation) {
-    conversation = {
-      id: decodedId,
-      clientEmail: clientEmail || (decodedId.includes("@") ? decodedId : "guest@ryvo.co"),
-      clientName: clientName || "زائر",
-      clientPhone: clientPhone || "",
-      country: country || "SA",
-      language: language || "ar",
-      device: device || "Desktop",
-      os: os || "Windows",
-      browser: browser || "Chrome",
-      ip: resolvedIp,
-      createdAt: new Date().toISOString(),
-      lastActive: Date.now(),
-      status: "active",
-      messages: []
-    };
-  }
-
-  if (clientName) conversation.clientName = clientName;
-  if (clientEmail) conversation.clientEmail = clientEmail;
-  if (clientPhone) conversation.clientPhone = clientPhone;
-  if (country) conversation.country = country;
-  if (language) conversation.language = language;
-  if (device) conversation.device = device;
-  if (os) conversation.os = os;
-  if (browser) conversation.browser = browser;
-  conversation.ip = resolvedIp;
-
-  if (!conversation.messages) {
-    conversation.messages = [];
-  }
-
-  const newMessage = {
-    id: `msg-${Date.now()}`,
-    sender: sender || "user",
-    text: message || "",
-    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    timestamp: Date.now(),
-    attachment: attachment || null
-  };
-
-  conversation.messages.push(newMessage);
-  conversation.lastActive = Date.now();
-
-  let aiReplied = false;
-  let aiResponseText = "";
-
-  if (newMessage.sender === "user") {
-    if (!settings.isAgentOnline && conversation.status !== "waiting") {
-      const isAr = (language || "ar") === "ar";
-      const langContext = isAr ? "Arabic" : "English";
-
-      let ordersSummary = "";
-      let ordersCount = 0;
-      let lastOrderDetails = "None";
-      if (db) {
-        try {
-          const ordersSnap = await db.collection("orders").get();
-          const conversationEmail = (conversation.clientEmail || "").toLowerCase().trim();
-          const conversationPhone = (conversation.clientPhone || "").trim();
-
-          const userOrders = ordersSnap.docs
-            .map((d: any) => d.data())
-            .filter((o: any) => {
-              const oEmail = (o.email || "").toLowerCase().trim();
-              const oPhone = (o.phone || "").trim();
-              return (conversationEmail && oEmail === conversationEmail) || (conversationPhone && oPhone === conversationPhone);
-            });
-          ordersCount = userOrders.length;
-          if (ordersCount > 0) {
-            const lastO = userOrders[0];
-            lastOrderDetails = `#${lastO.id} (${lastO.status || 'pending'}) - $${lastO.total}`;
-            ordersSummary = userOrders.map((o: any) => 
-              `- Order ID: ${o.id}, Status: ${o.status}, Phone: ${o.phone}, Total: $${o.total}, Items: ${(o.items || []).map((i: any) => `${i.name} (x${i.quantity})`).join(", ")}`
-            ).join("\n");
-          }
-        } catch (e) {}
-      }
-
-      conversation.ordersCount = ordersCount;
-      conversation.lastOrderDetails = lastOrderDetails;
-
-      const systemPrompt = `You are the highly professional AI Support Assistant for RYVO Store. 
-An agent is currently OFFLINE, so you are handling the chat. 
-Be polite, highly professional, and use emojis. 
-If you can, answer their question. If they request to speak with a human/employee, or if they ask a question you cannot answer, say that you will transfer them to a human agent, and explicitly use the keyword: [TRANSFER_TO_AGENT] in your reply.
-Language: ${langContext}.
-Orders Info:
-${ordersSummary || "No registered orders found for this user."}`;
-
-      if (ai) {
-        try {
-          // Format chat history properly for Gemini:
-          // 1. Role must alternate between 'user' and 'model'
-          // 2. Must start with 'user'
-          // 3. Must have non-empty text
-          const rawContents = conversation.messages
-            .filter((m: any) => m.text && m.text.trim())
-            .map((m: any) => ({
-              role: m.sender === "user" ? "user" : "model",
-              text: m.text.trim()
-            }));
-
-          const cleanedContents: any[] = [];
-          for (const msg of rawContents) {
-            if (cleanedContents.length === 0) {
-              if (msg.role === "user") {
-                cleanedContents.push({
-                  role: "user",
-                  parts: [{ text: msg.text }]
-                });
-              }
-            } else {
-              const last = cleanedContents[cleanedContents.length - 1];
-              if (last.role === msg.role) {
-                last.parts[0].text += "\n" + msg.text;
-              } else {
-                cleanedContents.push({
-                  role: msg.role,
-                  parts: [{ text: msg.text }]
-                });
-              }
-            }
-          }
-
-          // Slice to the last 6 messages
-          const contents = cleanedContents.slice(-6);
-          if (contents.length > 0 && contents[0].role === "model") {
-            contents.shift();
-          }
-
-          if (contents.length > 0) {
-            const response = await ai.models.generateContent({
-              model: "gemini-3.5-flash",
-              contents: contents,
-              config: { systemInstruction: systemPrompt }
-            });
-            aiResponseText = response.text || "";
-          }
-        } catch (e) {
-          console.error("Gemini failed in support flow, using smart fallback:", e);
+    if (sender === 'user') {
+      if (conversation.status === 'AI_HANDLING') {
+        const savedUserMsg = await dbSupportService.addMessage(conversation.id, 'customer', msgType, content, false);
+        if (savedUserMsg && io) {
+          io.to(`conversation_${decodedId}`).emit('message_received', savedUserMsg);
+          io.to('agents_room').emit('agent_message_received', { sessionId: decodedId, message: savedUserMsg });
         }
-      }
 
-      if (!aiResponseText) {
-        const lowerText = (message || "").toLowerCase();
-        if (lowerText.includes("موظف") || lowerText.includes("انسان") || lowerText.includes("شخص") || lowerText.includes("agent") || lowerText.includes("human") || lowerText.includes("speak to")) {
-          aiResponseText = isAr 
-            ? "حاضر يا فندم! سأقوم بتحويل المحادثة الآن إلى موظف دعم بشري وسيرد عليك فور تواجده. [TRANSFER_TO_AGENT] 💬🤝"
-            : "Understood! I am transferring your inquiry to a human support agent who will get back to you shortly. [TRANSFER_TO_AGENT] 💬🤝";
-        } else if (isAr) {
-          aiResponseText = "أهلاً بك! أنا مساعد الذكاء الاصطناعي لمتجر رايفو. الموظف غير متصل حالياً، لكني هنا لمساعدتك! بخصوص سؤالك، نوفر شحناً مجانياً وسريعاً خلال 2-4 أيام عمل، وضمان استبدال ذهبي لمدة 14 يوماً. هل تود أن أحولك لموظف بشري؟ [TRANSFER_TO_AGENT]";
+        conversation.messages.push({
+          id: savedUserMsg?.id || `temp-${Date.now()}`,
+          sender: 'user',
+          text: message,
+          attachment: attachment
+        });
+
+        // Trigger AI
+        const aiReply = await generateAIResponse(conversation, message || '', attachment);
+        let cleanAiReply = aiReply;
+        let shouldTransfer = false;
+
+        if (aiReply.includes('[TRANSFER_TO_AGENT]')) {
+          shouldTransfer = true;
+          cleanAiReply = aiReply.replace('[TRANSFER_TO_AGENT]', '').trim();
+        }
+
+        const savedAiMsg = await dbSupportService.addMessage(conversation.id, 'ai', 'text', cleanAiReply, false);
+        if (savedAiMsg && io) {
+          io.to(`conversation_${decodedId}`).emit('message_received', savedAiMsg);
+          io.to('agents_room').emit('agent_message_received', { sessionId: decodedId, message: savedAiMsg });
+        }
+
+        if (shouldTransfer) {
+          await dbSupportService.updateConversationStatus(conversation.id, 'PENDING_CUSTOMER_APPROVAL');
+          conversation.messages.push({
+            id: savedAiMsg?.id || `temp-ai-${Date.now()}`,
+            sender: 'support',
+            text: cleanAiReply
+          });
+          const summary = await generateSmartSummary(conversation);
+          await dbSupportService.updateConversationSummary(conversation.id, summary);
+
+          if (io) {
+            io.to(`conversation_${decodedId}`).emit('status_updated', { status: 'PENDING_CUSTOMER_APPROVAL', ai_summary: summary });
+            io.to('agents_room').emit('agent_status_updated', { sessionId: decodedId, status: 'PENDING_CUSTOMER_APPROVAL', ai_summary: summary });
+          }
+        }
+
+        return res.json({ success: true, conversation, aiReplied: true, aiResponseText: cleanAiReply });
+      } else {
+        const savedUserMsg = await dbSupportService.addMessage(conversation.id, 'customer', msgType, content, false);
+        if (savedUserMsg && io) {
+          io.to(`conversation_${decodedId}`).emit('message_received', savedUserMsg);
+          io.to('agents_room').emit('agent_message_received', { sessionId: decodedId, message: savedUserMsg });
+        }
+        return res.json({ success: true, conversation });
+      }
+    } else if (sender === 'support') {
+      const isNote = !!isInternal;
+      const savedAgentMsg = await dbSupportService.addMessage(conversation.id, 'agent', msgType, content, isNote);
+      if (savedAgentMsg && io) {
+        if (isNote) {
+          io.to('agents_room').emit('agent_message_received', { sessionId: decodedId, message: savedAgentMsg });
         } else {
-          aiResponseText = "Hello! I am Ryvo's AI assistant. Our support agents are offline, but I'm here to help! We offer free shipping within 2-4 days and a 14-day warranty. Would you like me to transfer you to a human agent? [TRANSFER_TO_AGENT]";
+          io.to(`conversation_${decodedId}`).emit('message_received', savedAgentMsg);
+          io.to('agents_room').emit('agent_message_received', { sessionId: decodedId, message: savedAgentMsg });
         }
       }
 
-      if (aiResponseText.includes("[TRANSFER_TO_AGENT]")) {
-        conversation.status = "waiting";
-        aiResponseText = aiResponseText.replace("[TRANSFER_TO_AGENT]", "").trim();
+      if (conversation.status === 'QUEUED_FOR_HUMAN' || conversation.status === 'PENDING_CUSTOMER_APPROVAL') {
+        await dbSupportService.updateConversationStatus(conversation.id, 'HUMAN_HANDLING');
+        if (io) {
+          io.to(`conversation_${decodedId}`).emit('status_updated', { status: 'HUMAN_HANDLING' });
+          io.to('agents_room').emit('agent_status_updated', { sessionId: decodedId, status: 'HUMAN_HANDLING' });
+        }
       }
-
-      const aiMessage = {
-        id: `msg-support-${Date.now()}`,
-        sender: "support",
-        text: aiResponseText,
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        timestamp: Date.now() + 1000
-      };
-
-      conversation.messages.push(aiMessage);
-      aiReplied = true;
-    } else if (conversation.status === "waiting") {
-      // Waiting for agent
+      return res.json({ success: true, conversation });
     }
-  } else if (newMessage.sender === "support") {
-    conversation.status = "active";
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (docRef) {
-    try {
-      await docRef.set(conversation);
-    } catch (e) {
-      console.error("Error saving conversation to Firestore:", e);
-    }
-  }
-
-  // Always save locally to prevent messages from disappearing
-  saveLocalSupportConversation(decodedId, conversation);
-
-  res.json({ success: true, conversation, aiReplied, aiResponseText });
 });
 
 // 6. Rate Conversation
@@ -3514,65 +3329,115 @@ app.post("/api/support/conversations/:id/rate", async (req, res) => {
   const decodedId = decodeURIComponent(id).toLowerCase().trim();
   const { rating, ratingComment } = req.body;
 
-  let conversation: any = null;
-  if (db) {
-    try {
-      const docRef = db.collection("support_conversations").doc(decodedId);
-      const snap = await docRef.get();
-      if (snap.exists()) {
-        conversation = snap.data();
-        conversation.rating = rating;
-        conversation.ratingComment = ratingComment;
-        conversation.status = "resolved";
-        conversation.lastActive = Date.now();
-        await docRef.set(conversation);
+  try {
+    const conversation = await dbSupportService.getConversationById(decodedId);
+    if (conversation) {
+      const dbStatus = getDbStatus();
+      if (dbStatus.connected) {
+        const metadata = conversation.metadata || {};
+        metadata.rating = rating;
+        metadata.ratingComment = ratingComment;
+        await query(
+          `UPDATE conversations SET status = 'CLOSED', metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [JSON.stringify(metadata), conversation.id]
+        );
+      } else {
+        const localData = loadLocalSupportConversations();
+        if (localData[decodedId]) {
+          localData[decodedId].rating = rating;
+          localData[decodedId].ratingComment = ratingComment;
+          localData[decodedId].status = 'CLOSED';
+          localData[decodedId].lastActive = Date.now();
+          saveLocalSupportConversation(decodedId, localData[decodedId]);
+        }
       }
-    } catch (e) {
-      console.error("Error rating support conversation:", e);
+
+      if (io) {
+        io.to(`conversation_${decodedId}`).emit('status_updated', { status: 'CLOSED' });
+        io.to('agents_room').emit('agent_status_updated', { sessionId: decodedId, status: 'CLOSED' });
+      }
+      return res.json({ success: true });
     }
+    res.json({ success: false });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (!conversation) {
-    const localData = loadLocalSupportConversations();
-    if (localData[decodedId]) {
-      conversation = localData[decodedId];
-      conversation.rating = rating;
-      conversation.ratingComment = ratingComment;
-      conversation.status = "resolved";
-      conversation.lastActive = Date.now();
-    }
-  }
-
-  if (conversation) {
-    saveLocalSupportConversation(decodedId, conversation);
-    return res.json({ success: true, conversation });
-  }
-
-  res.json({ success: false });
 });
 
 // 7. Typing status trigger
 app.post("/api/support/conversations/:id/typing", async (req, res) => {
   const { id } = req.params;
   const decodedId = decodeURIComponent(id).toLowerCase().trim();
-  const { sender } = req.body;
+  const { sender, isTyping } = req.body;
 
-  if (db) {
-    try {
-      const docRef = db.collection("support_conversations").doc(decodedId);
-      const snap = await docRef.get();
-      if (snap.exists()) {
-        const conversation = snap.data();
-        if (sender === "support") {
-          conversation.supportTypingUntil = Date.now() + 4000;
-        } else {
-          conversation.userTypingUntil = Date.now() + 4000;
-        }
-        await docRef.set(conversation);
-      }
-    } catch (e) {}
+  if (io) {
+    io.to(`conversation_${decodedId}`).emit('typing_status', { sender, isTyping });
   }
   res.json({ success: true });
+});
+
+// 7.5 Update status of conversation (Reset to AI, Close, Transfer)
+app.post("/api/support/conversations/:id/status", async (req, res) => {
+  const { id } = req.params;
+  const decodedId = decodeURIComponent(id).toLowerCase().trim();
+  const { status, ai_summary } = req.body;
+
+  try {
+    let updated = await dbSupportService.updateConversationStatus(decodedId, status);
+    if (ai_summary) {
+      updated = await dbSupportService.updateConversationSummary(decodedId, ai_summary);
+    }
+    if (io) {
+      io.to(`conversation_${decodedId}`).emit('status_updated', { status, ai_summary });
+      io.to('agents_room').emit('agent_status_updated', { sessionId: decodedId, status, ai_summary });
+    }
+    res.json({ success: true, conversation: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7.6 Add internal note route
+app.post("/api/support/conversations/:id/internal-note", async (req, res) => {
+  const { id } = req.params;
+  const decodedId = decodeURIComponent(id).toLowerCase().trim();
+  const { message } = req.body;
+
+  try {
+    const conversation = await dbSupportService.getOrCreateConversation(decodedId);
+    const savedNote = await dbSupportService.addMessage(conversation.id, 'agent', 'text', message, true);
+    if (savedNote && io) {
+      io.to('agents_room').emit('agent_message_received', { sessionId: decodedId, message: savedNote });
+    }
+    res.json({ success: true, message: savedNote });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7.7 Support media upload (Images / Audio clips)
+app.post("/api/support/upload", async (req, res) => {
+  const { fileName, fileType, base64Data } = req.body;
+  if (!base64Data) {
+    return res.status(400).json({ error: "No base64Data provided" });
+  }
+
+  try {
+    const buffer = Buffer.from(base64Data, 'base64');
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueName = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${fileName || 'file'}`;
+    const filePath = path.join(uploadDir, uniqueName);
+    fs.writeFileSync(filePath, buffer);
+
+    res.json({ success: true, url: `/uploads/${uniqueName}` });
+  } catch (err: any) {
+    console.error("Support upload failed:", err);
+    res.status(500).json({ error: "Failed to upload file" });
+  }
 });
 
 // 8. Live Notifications API Endpoint
@@ -3957,6 +3822,17 @@ app.get("/llms.txt", (req, res) => {
 
 // Vite frontend routing middleware setup
 async function setupViteRouter() {
+  const httpServer = createHttpServer(app);
+  
+  // Attach Socket.io
+  io = new SocketIOServer(httpServer, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    }
+  });
+  initSockets(io);
+
   if (process.env.NODE_ENV !== "production") {
     console.log("Starting server in DEVELOPMENT mode with Vite Middleware...");
     const vite = await createViteServer({
@@ -3973,7 +3849,15 @@ async function setupViteRouter() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // Initialize PostgreSQL database
+  console.log("🐘 Initializing PostgreSQL connection...");
+  try {
+    await initDb();
+  } catch (dbErr: any) {
+    console.error("⚠️ PostgreSQL initialization error:", dbErr.message);
+  }
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server successfully started on http://localhost:${PORT}`);
     
     // Seed the Firestore database asynchronously after the server is up and listening

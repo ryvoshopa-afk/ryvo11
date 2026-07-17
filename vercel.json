@@ -1,0 +1,1 @@
+{ "rewrites": [ { "source": "/api/:path*", "destination": "https://ryvo-backend-hiw4.onrender.com/api/:path*" } ] }
